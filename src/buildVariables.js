@@ -99,6 +99,13 @@ const buildGetListVariables = (introspectionResults) => (
       filter = { [key]: { _in: obj[key] } };
     } else if (obj[key] && obj[key].format === 'hasura-raw-query') {
       filter = { [key]: obj[key].value || {} };
+    } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+      //
+      // to handle filter like: <TextInput label="Name" source="user_profile.firstName._like" alwaysOn />
+      // which will become: {"user_profile": {"firstName": {"_like": VALUE}}}
+      // Note: add % to Value for the like query
+      //
+      filter = { [key]: obj[key] };
     } else {
       let [keyName, operation = ''] = key.split('@');
 
