@@ -41,18 +41,55 @@ const buildGetListVariables = (introspectionResults) => (
             'col2@like': 'val'
         }
     */
-  const orFilterObj = orFilterKeys.reduce((acc, commaSeparatedKey) => {
-    const keys = commaSeparatedKey.split(',');
-    return {
-      ...acc,
-      ...keys.reduce((acc2, key) => {
-        return {
-          ...acc2,
-          [key]: filterObj[commaSeparatedKey],
-        };
-      }, {}),
-    };
-  }, {});
+
+  /*
+  "email@_like,user_profile": {
+      "firstName@_like,user_profile": {
+        "lastName@_like,stripe_customer_id@_like": "a"
+      },
+    },
+
+    fold into
+
+  email@_like,user_profile . firstName@_like,user_profile . lastName@_like,stripe_customer_id@_like" : "a"
+  */
+  const folding = (object, results) => {
+    // if object
+    if (typeof object === 'object' && object !== null) {
+      const key = Object.keys(object)[0];
+      return folding(object[key], results + '.' + key);
+    }
+    // else string
+    else {
+      return results + '=' + object;
+    }
+  };
+
+  // clean up those filterKeys
+  var newFilterObjOR = {};
+  for (const idx in orFilterKeys) {
+    const key = orFilterKeys[idx];
+    const result = folding(filterObj[key], key);
+    const splitted = result.split('=');
+    newFilterObjOR[splitted[0]] = splitted[1];
+  }
+
+  const orFilterObj = Object.keys(newFilterObjOR).reduce(
+    (acc, commaSeparatedKey) => {
+      const keys = commaSeparatedKey.split(',');
+      return {
+        ...acc,
+        ...keys.reduce((acc2, key) => {
+          return {
+            ...acc2,
+            [key]: newFilterObjOR[commaSeparatedKey],
+          };
+        }, {}),
+      };
+    },
+    {}
+  );
+
   filterObj = omit(filterObj, orFilterKeys);
   const filterReducer = (obj) => (acc, key) => {
     let filter;
@@ -64,20 +101,37 @@ const buildGetListVariables = (introspectionResults) => (
       filter = { [key]: obj[key].value || {} };
     } else {
       let [keyName, operation = ''] = key.split('@');
-      const field = resource.type.fields.find((f) => f.name === keyName);
-      switch (getFinalType(field.type).name) {
-        case 'String':
-          operation = operation || '_ilike';
-          filter = {
-            [keyName]: {
-              [operation]: operation.includes('like')
-                ? `%${obj[key]}%`
-                : obj[key],
-            },
-          };
-          break;
-        default:
-          filter = { [keyName]: { [operation || '_eq']: obj[key] } };
+
+      // filter with relationship, fold it into an object for query relationship
+      // like: `user_profile.firstName@_ilike`
+      if (keyName.includes('.')) {
+        const items = keyName.split('.');
+        var result = {
+          [operation || '_eq']: operation.includes('like')
+            ? `%${obj[key]}%`
+            : obj[key],
+        };
+        for (var i = items.length; i > 0; i--) {
+          result = { [items[i - 1]]: result };
+        }
+        filter = result;
+      } else {
+        // case without relationship
+        const field = resource.type.fields.find((f) => f.name === keyName);
+        switch (getFinalType(field.type).name) {
+          case 'String':
+            operation = operation || '_ilike';
+            filter = {
+              [keyName]: {
+                [operation]: operation.includes('like')
+                  ? `%${obj[key]}%`
+                  : obj[key],
+              },
+            };
+            break;
+          default:
+            filter = { [keyName]: { [operation || '_eq']: obj[key] } };
+        }
       }
     }
     return [...acc, filter];
